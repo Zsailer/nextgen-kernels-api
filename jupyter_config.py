@@ -1,0 +1,8 @@
+from nextgen_kernel_manager.websocket_connection import NextGenKernelWebsocketConnection
+from nextgen_kernel_manager.kernel_manager import NextGenKernelManager
+from nextgen_kernel_manager.client import NextGenKernelClient
+from nextgen_kernel_manager.multi_kernel_manager import NextGenMappingKernelManager
+
+c.ServerApp.kernel_websocket_connection_class = NextGenKernelWebsocketConnection
+c.MultiKernelManager.kernel_manager_class = "nextgen_kernel_manager.kernel_manager.NextGenKernelManager"
+c.ServerApp.kernel_manager_class = NextGenMappingKernelManager

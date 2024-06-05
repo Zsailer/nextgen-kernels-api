@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nextgen-kernel-manager"
+dynamic = ["version"]
+description = ''
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "Zach Sailer", email = "zsailer@apple.com" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+  "jupyter_server>1,<3",
+  "anyio"
+]
+
+[project.urls]
+Documentation = "https://github.com/Zach Sailer/nextgen-kernel-manager#readme"
+Issues = "https://github.com/Zach Sailer/nextgen-kernel-manager/issues"
+Source = "https://github.com/Zach Sailer/nextgen-kernel-manager"
+
+[tool.hatch.version]
+path = "src/nextgen_kernel_manager/__about__.py"
+
+[tool.hatch.envs.types]
+extra-dependencies = [
+  "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/nextgen_kernel_manager tests}"
+
+[tool.coverage.run]
+source_pkgs = ["nextgen_kernel_manager", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/nextgen_kernel_manager/__about__.py",
+]
+
+[tool.coverage.paths]
+nextgen_kernel_manager = ["src/nextgen_kernel_manager", "*/nextgen-kernel-manager/src/nextgen_kernel_manager"]
+tests = ["tests", "*/nextgen-kernel-manager/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
