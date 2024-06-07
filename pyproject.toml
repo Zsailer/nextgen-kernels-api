@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "nextgen-kernel-manager"
+name = "nextgen-kernels-api"
 dynamic = ["version"]
 description = ''
 readme = "README.md"
@@ -30,31 +30,31 @@ dependencies = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/Zach Sailer/nextgen-kernel-manager#readme"
-Issues = "https://github.com/Zach Sailer/nextgen-kernel-manager/issues"
-Source = "https://github.com/Zach Sailer/nextgen-kernel-manager"
+Documentation = "https://github.com/Zach Sailer/nextgen-kernels-api#readme"
+Issues = "https://github.com/Zach Sailer/nextgen-kernels-api/issues"
+Source = "https://github.com/Zach Sailer/nextgen-kernels-api"
 
 [tool.hatch.version]
-path = "src/nextgen_kernel_manager/__about__.py"
+path = "src/nextgen_kernels_api/__about__.py"
 
 [tool.hatch.envs.types]
 extra-dependencies = [
   "mypy>=1.0.0",
 ]
 [tool.hatch.envs.types.scripts]
-check = "mypy --install-types --non-interactive {args:src/nextgen_kernel_manager tests}"
+check = "mypy --install-types --non-interactive {args:src/nextgen_kernels_api tests}"
 
 [tool.coverage.run]
-source_pkgs = ["nextgen_kernel_manager", "tests"]
+source_pkgs = ["nextgen_kernels_api", "tests"]
 branch = true
 parallel = true
 omit = [
-  "src/nextgen_kernel_manager/__about__.py",
+  "src/nextgen_kernels_api/__about__.py",
 ]
 
 [tool.coverage.paths]
-nextgen_kernel_manager = ["src/nextgen_kernel_manager", "*/nextgen-kernel-manager/src/nextgen_kernel_manager"]
-tests = ["tests", "*/nextgen-kernel-manager/tests"]
+nextgen_kernels_api = ["src/nextgen_kernels_api", "*/nextgen-kernels-api/src/nextgen_kernels_api"]
+tests = ["tests", "*/nextgen-kernels-api/tests"]
 
 [tool.coverage.report]
 exclude_lines = [

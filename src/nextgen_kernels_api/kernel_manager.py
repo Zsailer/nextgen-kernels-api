@@ -62,10 +62,10 @@ class NextGenKernelManager(AsyncKernelManager):
         self._execution_state = execution_state
         
     
-    _client: typing.Optional[AsyncKernelClient] = Instance(klass="nextgen_kernel_manager.client.NextGenKernelClient", allow_none=True)
+    _client: typing.Optional[AsyncKernelClient] = Instance(klass="nextgen_kernels_api.client.NextGenKernelClient", allow_none=True)
     
     client_class: DottedObjectName = DottedObjectName(
-        "nextgen_kernel_manager.client.NextGenKernelClient"
+        "nextgen_kernels_api.client.NextGenKernelClient"
     )
 
     @default("client_factory")
