@@ -36,7 +36,6 @@ class NextGenKernelWebsocketConnection(BaseKernelWebsocketConnection):
     def session(self) -> Session:
         # Ensure the key is always correct.
         if not self._session:
-            print("Session cloned")
             self._session = self.kernel_manager.session.clone()
         self._session.key = self.kernel_manager.session.key
         return self._session
@@ -46,28 +45,24 @@ class NextGenKernelWebsocketConnection(BaseKernelWebsocketConnection):
         This connection might take a few minutes, so we turn this into an
         asyncio task happening in parallel.
         """
-        self.handle_state_message()        
-        # If the kernel is in a dead state, do not continue with the connection flow.
-        if self.kernel_manager.lifecycle_state in LIFECYCLE_DEAD_STATES:
-            self.kernel_manager.set_state("dead", "dead")
-            self.handle_state_message()
-            return
-        self.kernel_manager.client.add_listener(self.handle_outgoing_message)
+        self.kernel_manager.add_listener(self.handle_outgoing_message)
+        self.kernel_manager.broadcast_state()
         self.log.info("Kernel websocket is now listening to kernel.")
 
     def disconnect(self):
-        self.kernel_manager.client.remove_listener(self.handle_outgoing_message)
+        self.kernel_manager.remove_listener(self.handle_outgoing_message)
 
     def handle_incoming_message(self, ws_message):
         """Handle the incoming WS message"""
+        
         msg = json.loads(ws_message)
         channel_name = msg.pop("channel", None)
-        if self.kernel_manager.client:
-            self.kernel_manager.client.send_message(channel_name, msg)
+        if self.kernel_manager._client:
+            self.kernel_manager.send_message(channel_name, msg)
 
     def handle_outgoing_message(self, socket_name, raw_msg):
         """Handle the ZMQ message."""
-        try:
+        try:            
             # Unpack the message a bit to determine the source and content.
             _, smsg = self.session.feed_identities(raw_msg)
             # Only deserialize the headers to determine the routing information.
@@ -77,14 +72,10 @@ class NextGenKernelWebsocketConnection(BaseKernelWebsocketConnection):
             self.websocket_handler.write_message(msg, binary=isinstance(msg, bytes))
         except WebSocketClosedError:
             self.log.warning("A ZMQ message arrived on a closed websocket channel.")
-
-    def handle_state_message(self, state=None):
-        """Write a set of state messages to the client."""
-        if state is None:
-            state = self.kernel_manager.execution_state
-        # Send a status messages the client
-        msg = self.session.msg("status", {"execution_state": state})
-        msg["channel"] = "iopub"
-        self.websocket_handler.write_message(
-            json.dumps(msg, default=json_default), binary=isinstance(msg, bytes)
-        )
+            
+            
+    def _deserialize_message(self, websocket_msg): 
+        return websocket_msg
+            
+    def _serialize_message(self, kernel_msg):
+        return kernel_msg
