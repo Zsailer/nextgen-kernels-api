@@ -72,16 +72,16 @@ class NextGenKernelManager(KernelListenerMixin, AsyncKernelManager):
     async def start_kernel(self, *args, **kwargs):
         self.set_state("starting", "starting")
         out = await super().start_kernel(*args, **kwargs)
-        self.set_state("started", "busy")
+        self.set_state("started")
         await self.connect()
         return out
         
     async def shutdown_kernel(self, *args, **kwargs):
-        self.set_state("terminating", "busy")
+        self.set_state("terminating")
         await self.disconnect()
         out = await super().shutdown_kernel(*args, **kwargs)
         self.set_state("terminated", "dead")
      
     async def restart_kernel(self, *args, **kwargs):
-        self.set_state("restarting", "busy")
+        self.set_state("restarting")
         return await super().restart_kernel(*args, **kwargs)
