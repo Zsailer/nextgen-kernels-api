@@ -21,3 +21,8 @@ Then run JupyterLab using the config file in the root of this repo.
 ```
 jupyter lab --config jupyter_config.py
 ```
+
+The REST API is NOT enabled by default. If you want to tryout the REST API, enable the extension before starting Jupyter server:
+```
+jupyter server enable nextgen_kernels_api
+```
