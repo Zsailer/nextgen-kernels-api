@@ -4,61 +4,48 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nextgen-kernels-api"
-dynamic = ["version"]
-description = ''
+version = "0.1.0"
+description = "Next-generation Jupyter kernel management with decoupled client connections"
 readme = "README.md"
 requires-python = ">=3.8"
-license = "MIT"
-keywords = []
+license = { text = "BSD-3-Clause" }
 authors = [
-  { name = "Zach Sailer", email = "zsailer@apple.com" },
+    { name = "Zach Sailer", email = "zsailer@apple.com" },
 ]
 classifiers = [
-  "Development Status :: 4 - Beta",
-  "Programming Language :: Python",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: Implementation :: CPython",
-  "Programming Language :: Python :: Implementation :: PyPy",
+    "Development Status :: 3 - Alpha",
+    "Framework :: Jupyter",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-  "jupyter_server>1,<3",
-  "anyio"
+    "jupyter-server>=2.0.0",
+    "jupyter-client>=8.0.0",
+    "traitlets>=5.0.0",
 ]
 
-[project.urls]
-Documentation = "https://github.com/Zach Sailer/nextgen-kernels-api#readme"
-Issues = "https://github.com/Zach Sailer/nextgen-kernels-api/issues"
-Source = "https://github.com/Zach Sailer/nextgen-kernels-api"
-
-[tool.hatch.version]
-path = "src/nextgen_kernels_api/__about__.py"
-
-[tool.hatch.envs.types]
-extra-dependencies = [
-  "mypy>=1.0.0",
-]
-[tool.hatch.envs.types.scripts]
-check = "mypy --install-types --non-interactive {args:src/nextgen_kernels_api tests}"
-
-[tool.coverage.run]
-source_pkgs = ["nextgen_kernels_api", "tests"]
-branch = true
-parallel = true
-omit = [
-  "src/nextgen_kernels_api/__about__.py",
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
 ]
 
-[tool.coverage.paths]
-nextgen_kernels_api = ["src/nextgen_kernels_api", "*/nextgen-kernels-api/src/nextgen_kernels_api"]
-tests = ["tests", "*/nextgen-kernels-api/tests"]
+[tool.hatch.build.targets.wheel]
+packages = ["nextgen_kernels_api"]
 
-[tool.coverage.report]
-exclude_lines = [
-  "no cov",
-  "if __name__ == .__main__.:",
-  "if TYPE_CHECKING:",
-]
+[tool.black]
+line-length = 100
+target-version = ["py38"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
