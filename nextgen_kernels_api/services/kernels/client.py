@@ -442,8 +442,14 @@ class JupyterServerKernelClientMixin(HasTraits):
         try:
             # Create status message as a dict
             parent_header = self.session.msg_header("status")
+            parent_msg_id = parent_header["msg_id"]
             msg_dict = self.session.msg("status", content={"execution_state": self.execution_state}, parent=parent_header)
 
+            self.message_cache.add({
+                "msg_id": parent_msg_id,
+                "channel": "shell",
+                "cell_id": None
+            })
             # Serialize using session.serialize to create a proper ZMQ message format
             # This returns the full message including signature, just like recv_multipart() would
             # We need to drop the signature and identities (first 2 elements)
