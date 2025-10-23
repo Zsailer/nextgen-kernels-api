@@ -89,6 +89,7 @@ sequenceDiagram
 - **Shared Kernel Client**: Single ZMQ connection per kernel, shared across all consumers
 - **Message Listener API**: Register callbacks to receive kernel messages from all channels
 - **Message Filtering**: Filter messages by type and channel when adding listeners (see [docs](docs/message_filtering.md))
+- **Configurable WebSocket Filtering**: Configure message filtering for WebSocket connections via Jupyter Server config (see [docs](docs/websocket_filtering_config.md))
 - **Connection Management**: Robust connect/disconnect/reconnect with health checks
 - **State Tracking**: Monitor execution state (`idle`, `busy`, `starting`) via status messages
 - **Message Queuing**: Queue messages during connection setup, deliver when ready

@@ -1,5 +1,7 @@
 import asyncio
+from typing import List, Tuple, Optional
 from tornado.websocket import WebSocketClosedError
+from traitlets import List as TraitletsList, Tuple as TraitletsTuple
 from jupyter_server.services.kernels.connection.base import (
     BaseKernelWebsocketConnection,
 )
@@ -10,6 +12,38 @@ from ..client_manager import KernelClientManager
 class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
 
     kernel_ws_protocol = "v1.kernel.websocket.jupyter.org"
+
+    # Configurable message filtering traits
+    msg_types = TraitletsList(
+        trait=TraitletsTuple(),
+        default_value=None,
+        allow_none=True,
+        config=True,
+        help="""
+        List of (msg_type, channel) tuples to include for this websocket connection.
+        If None (default), all messages are sent. If specified, only messages matching
+        these (msg_type, channel) pairs will be sent to the websocket.
+
+        Example: [("status", "iopub"), ("execute_reply", "shell")]
+        """
+    )
+
+    exclude_msg_types = TraitletsList(
+        trait=TraitletsTuple(),
+        default_value=None,
+        allow_none=True,
+        config=True,
+        help="""
+        List of (msg_type, channel) tuples to exclude for this websocket connection.
+        If None (default), no messages are excluded. If specified, messages matching
+        these (msg_type, channel) pairs will NOT be sent to the websocket.
+
+        Example: [("status", "iopub")]
+
+        Note: Cannot be used together with msg_types. If both are specified,
+        msg_types takes precedence.
+        """
+    )
 
     def _get_client_manager(self):
         """Get the kernel client manager instance."""
@@ -43,7 +77,18 @@ class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
         client = self._get_kernel_client()
 
         # Add websocket listener immediately (messages will be queued if not ready)
-        client.add_listener(self.handle_outgoing_message)
+        # Use configured message filtering if specified
+        if self.msg_types is not None:
+            # Convert list of tuples to list for the API
+            msg_types_list = [tuple(item) for item in self.msg_types] if self.msg_types else None
+            client.add_listener(self.handle_outgoing_message, msg_types=msg_types_list)
+        elif self.exclude_msg_types is not None:
+            # Convert list of tuples to list for the API
+            exclude_msg_types_list = [tuple(item) for item in self.exclude_msg_types] if self.exclude_msg_types else None
+            client.add_listener(self.handle_outgoing_message, exclude_msg_types=exclude_msg_types_list)
+        else:
+            # No filtering - listen to all messages (default)
+            client.add_listener(self.handle_outgoing_message)
 
         # Broadcast current kernel state to this websocket immediately
         # This ensures websockets that connect during/after restart get the current state
