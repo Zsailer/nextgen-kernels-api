@@ -91,6 +91,7 @@ class KernelClientRegistry(SingletonConfigurable):
                 return None
 
             # Create client using kernel manager's client factory
+            # This automatically uses the kernel manager's configurable client_class trait
             client = kernel_manager.client(session=kernel_manager.session)
 
             # Register the client

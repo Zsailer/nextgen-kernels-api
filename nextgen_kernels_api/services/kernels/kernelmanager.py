@@ -4,6 +4,7 @@ from jupyter_server.services.kernels.kernelmanager import ServerKernelManager
 from jupyter_server.services.kernels.kernelmanager import (
     AsyncMappingKernelManager,
 )
+from traitlets import Type, observe
 from .client import JupyterServerKernelClient
 from .state_mixin import KernelManagerStateMixin
 
@@ -15,9 +16,26 @@ class KernelManager(KernelManagerStateMixin, ServerKernelManager):
     - Automatic lifecycle state tracking via KernelManagerStateMixin
     - Enhanced kernel client (JupyterServerKernelClient)
     """
-    # Since these are not configurable traits, we have to override them.
-    client_class = JupyterServerKernelClient
-    client_factory = JupyterServerKernelClient
+
+    client_class = Type(
+        default_value=JupyterServerKernelClient,
+        klass='jupyter_client.client.KernelClient',
+        config=True,
+        help="""The kernel client class to use for creating kernel clients."""
+    )
+
+    client_factory = Type(
+        default_value=JupyterServerKernelClient,
+        klass='jupyter_client.client.KernelClient',
+        config=True,
+        help="""The kernel client factory class to use."""
+    )
+
+    @observe('client_class')
+    def _client_class_changed(self, change):
+        """Override parent's _client_class_changed to handle Type trait instead of DottedObjectName."""
+        # Set client_factory to the same class
+        self.client_factory = change['new']
     
 
 class MultiKernelManager(AsyncMappingKernelManager):
