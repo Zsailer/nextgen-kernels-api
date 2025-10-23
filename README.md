@@ -88,6 +88,7 @@ sequenceDiagram
 
 - **Shared Kernel Client**: Single ZMQ connection per kernel, shared across all consumers
 - **Message Listener API**: Register callbacks to receive kernel messages from all channels
+- **Message Filtering**: Filter messages by type and channel when adding listeners (see [docs](docs/message_filtering.md))
 - **Connection Management**: Robust connect/disconnect/reconnect with health checks
 - **State Tracking**: Monitor execution state (`idle`, `busy`, `starting`) via status messages
 - **Message Queuing**: Queue messages during connection setup, deliver when ready
@@ -108,7 +109,15 @@ To integrate, simply register the YDoc as a listener on the shared kernel client
 # In your YDoc initialization
 client_registry = app.settings["client_registry"]
 client = client_registry.get_client(kernel_id)
+
+# Listen to all messages
 client.add_listener(ydoc.handle_kernel_message)
+
+# Or filter to only specific message types
+client.add_listener(
+    ydoc.handle_kernel_message,
+    msg_types=[("execute_result", "iopub"), ("stream", "iopub")]
+)
 ```
 
 ## Installation

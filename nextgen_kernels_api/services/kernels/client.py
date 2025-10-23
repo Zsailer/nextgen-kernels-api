@@ -75,7 +75,7 @@ class JupyterServerKernelClientMixin(HasTraits):
     # Set of listener functions - don't use Traitlets Set, just plain Python set
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._listeners = set()
+        self._listeners = {}  # Maps callback -> filter config
         self._listening = False
 
         # Connection state tracking
@@ -96,17 +96,39 @@ class JupyterServerKernelClientMixin(HasTraits):
         # Ensure upstream methods are wrapped to track outgoing messages
         self._ensure_methods_wrapped()
 
-    def add_listener(self, callback: t.Callable[[str, list[bytes]], None]):
+    def add_listener(
+        self,
+        callback: t.Callable[[str, list[bytes]], None],
+        msg_types: t.Optional[t.List[t.Tuple[str, str]]] = None,
+        exclude_msg_types: t.Optional[t.List[t.Tuple[str, str]]] = None
+    ):
         """Add a listener to be called when messages are received.
 
         Args:
             callback: Function that takes (channel_name, msg_bytes) as arguments
+            msg_types: Optional list of (msg_type, channel) tuples to include.
+                      If provided, only messages matching these filters will be sent to the listener.
+                      Example: [("status", "iopub"), ("execute_reply", "shell")]
+            exclude_msg_types: Optional list of (msg_type, channel) tuples to exclude.
+                              If provided, messages matching these filters will NOT be sent to the listener.
+                              Example: [("status", "iopub")]
+
+        Note:
+            - If both msg_types and exclude_msg_types are provided, msg_types takes precedence
+            - If neither is provided, all messages are sent (default behavior)
         """
-        self._listeners.add(callback)
+        if msg_types is not None and exclude_msg_types is not None:
+            raise ValueError("Cannot specify both msg_types and exclude_msg_types")
+
+        # Store the listener with its filter configuration
+        self._listeners[callback] = {
+            'msg_types': set(msg_types) if msg_types else None,
+            'exclude_msg_types': set(exclude_msg_types) if exclude_msg_types else None
+        }
 
     def remove_listener(self, callback: t.Callable[[str, list[bytes]], None]):
         """Remove a listener."""
-        self._listeners.discard(callback)
+        self._listeners.pop(callback, None)
 
     def _get_channel_for_method(self, method_name: str) -> str:
         """Determine which channel a kernel client method uses."""
@@ -284,27 +306,55 @@ class JupyterServerKernelClientMixin(HasTraits):
         asyncio.create_task(self._route_to_listeners(channel_name, msg))
 
     async def _route_to_listeners(self, channel_name: str, msg: list[bytes]):
-        """Route message to all registered listeners."""
+        """Route message to all registered listeners based on their filters."""
         if not self._listeners:
             return
 
-        # Debug: log message type being routed
+        # Extract message type for filtering
+        msg_type = None
         try:
             header = self.session.unpack(msg[0]) if msg and len(msg) > 0 else {}
             msg_type = header.get('msg_type', 'unknown')
             self.log.debug(f"Routing {channel_name} message ({msg_type}) to {len(self._listeners)} listeners")
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.debug(f"Error extracting message type: {e}")
+            msg_type = 'unknown'
 
-        # Create tasks for all listeners
+        # Create tasks for listeners that match the filter
         tasks = []
-        for listener in self._listeners:
-            task = asyncio.create_task(self._call_listener(listener, channel_name, msg))
-            tasks.append(task)
+        for listener, filter_config in self._listeners.items():
+            if self._should_route_to_listener(msg_type, channel_name, filter_config):
+                task = asyncio.create_task(self._call_listener(listener, channel_name, msg))
+                tasks.append(task)
 
         # Wait for all listeners to complete
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _should_route_to_listener(self, msg_type: str, channel_name: str, filter_config: dict) -> bool:
+        """Determine if a message should be routed to a listener based on its filter configuration.
+
+        Args:
+            msg_type: The message type (e.g., "status", "execute_reply")
+            channel_name: The channel name (e.g., "iopub", "shell")
+            filter_config: Dictionary with 'msg_types' and 'exclude_msg_types' keys
+
+        Returns:
+            bool: True if the message should be routed to the listener, False otherwise
+        """
+        msg_types = filter_config.get('msg_types')
+        exclude_msg_types = filter_config.get('exclude_msg_types')
+
+        # If msg_types is specified (inclusion filter)
+        if msg_types is not None:
+            return (msg_type, channel_name) in msg_types
+
+        # If exclude_msg_types is specified (exclusion filter)
+        if exclude_msg_types is not None:
+            return (msg_type, channel_name) not in exclude_msg_types
+
+        # No filter specified - route all messages
+        return True
 
     async def _call_listener(self, listener: t.Callable, channel_name: str, msg: list[bytes]):
         """Call a single listener, ensuring it's async and handling errors."""
