@@ -4,33 +4,33 @@ from jupyter_server.services.kernels.connection.base import (
     BaseKernelWebsocketConnection,
 )
 from jupyter_server.services.kernels.connection.base import deserialize_msg_from_ws_v1, serialize_msg_to_ws_v1
-from ..client_registry import KernelClientRegistry
+from ..client_manager import KernelClientManager
 
 
 class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
 
     kernel_ws_protocol = "v1.kernel.websocket.jupyter.org"
 
-    def _get_client_registry(self):
-        """Get the kernel client registry instance."""
-        return KernelClientRegistry.instance()
+    def _get_client_manager(self):
+        """Get the kernel client manager instance."""
+        return KernelClientManager.instance()
 
     def _get_kernel_client(self):
-        """Get the kernel client from the client registry."""
+        """Get the kernel client from the client manager."""
         try:
-            client_registry = self._get_client_registry()
+            client_manager = self._get_client_manager()
 
             # First check if client already exists
-            if client_registry.has_client(self.kernel_id):
-                return client_registry.get_client(self.kernel_id)
+            if client_manager.has_client(self.kernel_id):
+                return client_manager.get_client(self.kernel_id)
 
             # Create new client if not found
-            client = client_registry.create_client(self.kernel_id)
+            client = client_manager.create_client(self.kernel_id)
             if not client:
-                raise RuntimeError(f"No kernel client found in registry for kernel {self.kernel_id}")
+                raise RuntimeError(f"No kernel client found in manager for kernel {self.kernel_id}")
             return client
         except Exception as e:
-            raise RuntimeError(f"Failed to get kernel client from registry for kernel {self.kernel_id}: {e}")
+            raise RuntimeError(f"Failed to get kernel client from manager for kernel {self.kernel_id}: {e}")
 
     async def connect(self):
         """Connect to the kernel via a kernel session with deferred channel connection.
@@ -69,8 +69,8 @@ class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
                 return
 
             # This will wait for kernel to be started, then connect channels
-            client_registry = self._get_client_registry()
-            success = await client_registry.connect_client(self.kernel_id)
+            client_manager = self._get_client_manager()
+            success = await client_manager.connect_client(self.kernel_id)
 
             if success:
                 self.log.info(f"Background connection successful for kernel {self.kernel_id}")
@@ -89,10 +89,10 @@ class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
             self._background_task.cancel()
 
         try:
-            client_registry = self._get_client_registry()
+            client_manager = self._get_client_manager()
             # Only remove listener if client exists, don't try to create it
-            if client_registry.has_client(self.kernel_id):
-                client = client_registry.get_client(self.kernel_id)
+            if client_manager.has_client(self.kernel_id):
+                client = client_manager.get_client(self.kernel_id)
                 client.remove_listener(self.handle_outgoing_message)
         except Exception as e:
             self.log.debug(f"Failed to disconnect websocket: {e}")
@@ -113,10 +113,10 @@ class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
             pass
 
         try:
-            client_registry = self._get_client_registry()
+            client_manager = self._get_client_manager()
             # Only handle message if client exists, don't try to create it
-            if client_registry.has_client(self.kernel_id):
-                client = client_registry.get_client(self.kernel_id)
+            if client_manager.has_client(self.kernel_id):
+                client = client_manager.get_client(self.kernel_id)
                 client.handle_incoming_message(channel_name, msg_list)
             else:
                 self.log.debug(f"Received message for kernel {self.kernel_id} but client no longer exists")

@@ -1,6 +1,6 @@
 from jupyter_server.serverapp import ServerApp
 from traitlets.config import Config
-from .services.kernels.client_registry import KernelClientRegistry
+from .services.kernels.client_manager import KernelClientManager
 
 
 _PACKAGE_NAME = "nextgen_kernels_api"
@@ -78,10 +78,10 @@ def _link_jupyter_server_extension(serverapp: ServerApp):
 
 
 def _load_jupyter_server_extension(serverapp: ServerApp):
-        client_registry = KernelClientRegistry.instance(parent=serverapp, multi_kernel_manager=serverapp.kernel_manager)
+        client_manager = KernelClientManager.instance(parent=serverapp, multi_kernel_manager=serverapp.kernel_manager)
         # Get the event logger from the server app
         event_logger = serverapp.event_logger
 
-        # Register event listeners in each registry
-        client_registry.register_event_listener(event_logger)
-        serverapp.web_app.settings["client_registry"] = client_registry
+        # Register event listeners in the manager
+        client_manager.register_event_listener(event_logger)
+        serverapp.web_app.settings["client_manager"] = client_manager

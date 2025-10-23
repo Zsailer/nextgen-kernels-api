@@ -1,5 +1,5 @@
 """
-Kernel Client Registry - Manages kernel clients independently from kernel managers
+Kernel Client Manager - Manages kernel clients independently from kernel managers
 """
 import asyncio
 import time
@@ -11,8 +11,8 @@ from .client import JupyterServerKernelClient
 from .states import LifecycleStates
 
 
-class KernelClientRegistry(SingletonConfigurable):
-    """Registry to manage kernel clients independently from kernel managers."""
+class KernelClientManager(SingletonConfigurable):
+    """Manager to manage kernel clients independently from kernel managers."""
 
     multi_kernel_manager = Instance(
         "jupyter_client.multikernelmanager.MultiKernelManager",

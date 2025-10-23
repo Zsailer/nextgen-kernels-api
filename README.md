@@ -23,7 +23,7 @@ graph LR
 
 ## Architecture
 
-This project introduces a **Client Registry** that manages a single shared kernel client per kernel:
+This project introduces a **Client Manager** that manages a single shared kernel client per kernel:
 
 ```mermaid
 graph TB
@@ -34,7 +34,7 @@ graph TB
         YD[YDoc / Server Documents]
     end
 
-    subgraph "Client Registry"
+    subgraph "Client Manager"
         KC[Shared Kernel Client]
     end
 
@@ -53,18 +53,18 @@ graph TB
 ```mermaid
 sequenceDiagram
     participant WS as WebSocket
-    participant CR as Client Registry
+    participant CM as Client Manager
     participant KC as Kernel Client
     participant K as Kernel
 
-    WS->>CR: WebSocket connects
-    CR->>CR: get_or_create_client(kernel_id)
-    CR->>KC: add_listener(websocket_callback)
+    WS->>CM: WebSocket connects
+    CM->>CM: get_or_create_client(kernel_id)
+    CM->>KC: add_listener(websocket_callback)
     KC-->>WS: broadcast current state
 
     par Background Connection
-        CR->>K: wait for kernel ready
-        CR->>KC: connect channels
+        CM->>K: wait for kernel ready
+        CM->>KC: connect channels
         KC->>K: test communication
         KC->>KC: mark connection ready
         KC->>KC: process queued messages
@@ -107,8 +107,8 @@ To integrate, simply register the YDoc as a listener on the shared kernel client
 
 ```python
 # In your YDoc initialization
-client_registry = app.settings["client_registry"]
-client = client_registry.get_client(kernel_id)
+client_manager = app.settings["client_manager"]
+client = client_manager.get_client(kernel_id)
 
 # Listen to all messages
 client.add_listener(ydoc.handle_kernel_message)
