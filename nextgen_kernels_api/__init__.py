@@ -78,10 +78,13 @@ def _link_jupyter_server_extension(serverapp: ServerApp):
 
 
 def _load_jupyter_server_extension(serverapp: ServerApp):
+    # Initialize an instance of the kernel manager, if it hasn't been initialized previously.
+    if not KernelClientManager.initialized():
         client_manager = KernelClientManager.instance(parent=serverapp, multi_kernel_manager=serverapp.kernel_manager)
         # Get the event logger from the server app
         event_logger = serverapp.event_logger
 
         # Register event listeners in the manager
         client_manager.register_event_listener(event_logger)
-        serverapp.web_app.settings["client_manager"] = client_manager
+    
+    serverapp.web_app.settings["client_manager"] = client_manager
