@@ -4,7 +4,7 @@ import asyncio
 from jupyter_server.gateway.managers import GatewayMappingKernelManager
 from jupyter_server.gateway.managers import GatewayKernelManager as _GatewayKernelManager
 from jupyter_server.gateway.managers import GatewayKernelClient as _GatewayKernelClient
-from traitlets import default
+from traitlets import default, Instance
 
 from ..services.kernels.state_mixin import KernelManagerStateMixin
 from ..services.kernels.client import JupyterServerKernelClientMixin
@@ -114,6 +114,7 @@ class GatewayKernelManager(KernelManagerStateMixin, _GatewayKernelManager):
     - Message caching and state management
     - Full compatibility with our kernel monitor extension
     - Automatic lifecycle state tracking via KernelManagerStateMixin
+    - Pre-created kernel client instance stored as a property
 
     When jupyter_server is configured to use a gateway, this manager ensures that
     remote kernels receive the same level of monitoring as local kernels.
@@ -121,6 +122,18 @@ class GatewayKernelManager(KernelManagerStateMixin, _GatewayKernelManager):
     # Configure the manager to use our enhanced gateway client
     client_class = GatewayKernelClient
     client_factory = GatewayKernelClient
+
+    kernel_client = Instance(
+        'jupyter_client.client.KernelClient',
+        allow_none=True,
+        help="""Pre-created kernel client instance. Created on initialization."""
+    )
+
+    def __init__(self, **kwargs):
+        """Initialize the kernel manager and create a kernel client instance."""
+        super().__init__(**kwargs)
+        # Create a kernel client instance immediately
+        self.kernel_client = self.client(session=self.session)
 
 
 class GatewayMultiKernelManager(GatewayMappingKernelManager):

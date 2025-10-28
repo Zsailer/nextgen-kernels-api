@@ -74,7 +74,11 @@ class KernelClientManager(SingletonConfigurable):
                 await self.remove_client(kernel_id)
     
     def create_client(self, kernel_id: str) -> Optional[JupyterServerKernelClient]:
-        """Create and register a kernel client for the given kernel."""
+        """Create and register a kernel client for the given kernel.
+
+        First checks if the kernel manager has a pre-created kernel_client property.
+        If not, falls back to creating a new client using the kernel manager's client factory.
+        """
         if kernel_id in self.clients:
             return self.clients[kernel_id]
 
@@ -90,9 +94,17 @@ class KernelClientManager(SingletonConfigurable):
                 self.log.error(f"No kernel manager found for kernel {kernel_id}")
                 return None
 
-            # Create client using kernel manager's client factory
-            # This automatically uses the kernel manager's configurable client_class trait
-            client = kernel_manager.client(session=kernel_manager.session)
+            # Check if kernel manager has a pre-created kernel_client property
+            if hasattr(kernel_manager, 'kernel_client') and kernel_manager.kernel_client is not None:
+                client = kernel_manager.kernel_client
+                if self.log:
+                    self.log.debug(f"Using pre-created kernel_client from kernel manager for kernel {kernel_id}")
+            else:
+                # Fallback: Create client using kernel manager's client factory
+                # This automatically uses the kernel manager's configurable client_class trait
+                client = kernel_manager.client(session=kernel_manager.session)
+                if self.log:
+                    self.log.debug(f"Created new client using kernel manager's client factory for kernel {kernel_id}")
 
             # Register the client
             self.clients[kernel_id] = client
