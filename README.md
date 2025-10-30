@@ -23,7 +23,7 @@ graph LR
 
 ## Architecture
 
-This project introduces a **Client Manager** that manages a single shared kernel client per kernel:
+This project introduces a **shared kernel client** managed by the kernel manager itself:
 
 ```mermaid
 graph TB
@@ -34,7 +34,7 @@ graph TB
         YD[YDoc / Server Documents]
     end
 
-    subgraph "Client Manager"
+    subgraph "Kernel Manager"
         KC[Shared Kernel Client]
     end
 
@@ -53,22 +53,21 @@ graph TB
 ```mermaid
 sequenceDiagram
     participant WS as WebSocket
-    participant CM as Client Manager
+    participant KM as Kernel Manager
     participant KC as Kernel Client
     participant K as Kernel
 
-    WS->>CM: WebSocket connects
-    CM->>CM: get_or_create_client(kernel_id)
-    CM->>KC: add_listener(websocket_callback)
-    KC-->>WS: broadcast current state
+    Note over KM,KC: Kernel start creates client
+    KM->>KC: create kernel_client instance
+    KM->>K: start kernel
+    KM->>KC: load connection info
+    KM->>KC: connect()
+    KC->>K: test communication
+    KC->>KC: mark connection ready
 
-    par Background Connection
-        CM->>K: wait for kernel ready
-        CM->>KC: connect channels
-        KC->>K: test communication
-        KC->>KC: mark connection ready
-        KC->>KC: process queued messages
-    end
+    WS->>KC: WebSocket connects
+    KC->>WS: add_listener(websocket_callback)
+    KC-->>WS: broadcast current state
 
     WS->>KC: send message to kernel
     K-->>KC: kernel response
@@ -104,12 +103,18 @@ This architecture is designed to work seamlessly with [jupyter-server-documents]
 - **No lost outputs**: Cell outputs flow directly to YDoc, even if no WebSocket connected
 - **Real-time collaboration**: All clients (WebSockets + YDoc) see kernel state simultaneously
 
-To integrate, simply register the YDoc as a listener on the shared kernel client:
+To integrate, simply register the YDoc as a listener on the kernel manager's client:
 
 ```python
-# In your YDoc initialization
-client_manager = app.settings["client_manager"]
-client = client_manager.get_client(kernel_id)
+# In your YDoc initialization or extension
+# Get the multi-kernel manager from the server app
+mkm = app.kernel_manager
+
+# Get the specific kernel manager for your kernel
+km = mkm.get_kernel(kernel_id)
+
+# Access the shared kernel client
+client = km.kernel_client
 
 # Listen to all messages
 client.add_listener(ydoc.handle_kernel_message)
