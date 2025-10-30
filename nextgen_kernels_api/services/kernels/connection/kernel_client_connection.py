@@ -6,7 +6,6 @@ from jupyter_server.services.kernels.connection.base import (
     BaseKernelWebsocketConnection,
 )
 from jupyter_server.services.kernels.connection.base import deserialize_msg_from_ws_v1, serialize_msg_to_ws_v1
-from ..client_manager import KernelClientManager
 
 
 class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
@@ -45,35 +44,37 @@ class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
         """
     )
 
-    def _get_client_manager(self):
-        """Get the kernel client manager instance."""
-        return KernelClientManager.instance()
-
     def _get_kernel_client(self):
-        """Get the kernel client from the client manager."""
+        """Get the kernel client directly from the kernel manager.
+
+        The kernel client is now a property on the kernel manager itself,
+        created immediately when the kernel manager is instantiated.
+
+        Note: self.kernel_manager is actually the parent, which is the specific
+        KernelManager instance for this kernel (not the MultiKernelManager).
+        """
         try:
-            client_manager = self._get_client_manager()
+            # self.kernel_manager is the specific KernelManager for this kernel
+            km = self.kernel_manager
+            if not km:
+                raise RuntimeError(f"No kernel manager found for kernel {self.kernel_id}")
 
-            # First check if client already exists
-            if client_manager.has_client(self.kernel_id):
-                return client_manager.get_client(self.kernel_id)
+            # Get the pre-created kernel client from the kernel manager
+            if not hasattr(km, 'kernel_client') or km.kernel_client is None:
+                raise RuntimeError(f"Kernel manager for {self.kernel_id} has no kernel_client")
 
-            # Create new client if not found
-            client = client_manager.create_client(self.kernel_id)
-            if not client:
-                raise RuntimeError(f"No kernel client found in manager for kernel {self.kernel_id}")
-            return client
+            return km.kernel_client
+
         except Exception as e:
-            raise RuntimeError(f"Failed to get kernel client from manager for kernel {self.kernel_id}: {e}")
+            raise RuntimeError(f"Failed to get kernel client for kernel {self.kernel_id}: {e}")
 
     async def connect(self):
         """Connect to the kernel via a kernel session with deferred channel connection.
 
-        The key change: Create the client immediately but defer actual channel connection
-        until the kernel is ready. Messages received before the connection is ready
-        will be queued and processed once the connection is established.
+        The client connection is now handled by the kernel manager in post_start_kernel().
+        The websocket just needs to add itself as a listener to receive messages.
         """
-        # Get or create the client
+        # Get the client from the kernel manager
         client = self._get_kernel_client()
 
         # Add websocket listener immediately (messages will be queued if not ready)
@@ -94,79 +95,30 @@ class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
         # This ensures websockets that connect during/after restart get the current state
         await client.broadcast_state()
 
-        # Start the background connection process (don't await it)
-        # This allows the websocket to be responsive immediately while
-        # the kernel finishes starting up
-        self._background_task = asyncio.create_task(self._background_connect())
-        self.log.info(f"Kernel websocket is now listening to kernel (connection pending).")
-
-    async def _background_connect(self):
-        """Background task to connect the client once the kernel is ready."""
-        try:
-            # Verify kernel manager still exists for this kernel
-            try:
-                kernel_manager = self.kernel_manager.get_kernel(self.kernel_id)
-                if not kernel_manager:
-                    self.log.debug(f"Kernel {self.kernel_id} no longer exists, aborting background connection")
-                    return
-            except Exception:
-                self.log.debug(f"Kernel {self.kernel_id} not found, aborting background connection")
-                return
-
-            # This will wait for kernel to be started, then connect channels
-            client_manager = self._get_client_manager()
-            success = await client_manager.connect_client(self.kernel_id)
-
-            if success:
-                self.log.info(f"Background connection successful for kernel {self.kernel_id}")
-            else:
-                self.log.warning(f"Background connection failed for kernel {self.kernel_id}")
-
-        except asyncio.CancelledError:
-            self.log.debug(f"Background connection cancelled for kernel {self.kernel_id}")
-            raise
-        except Exception as e:
-            self.log.error(f"Background connection error for kernel {self.kernel_id}: {e}")
+        self.log.info(f"Kernel websocket connected and listening for kernel {self.kernel_id}")
 
     def disconnect(self):
-        # Cancel the background connection task if it's still running
-        if hasattr(self, '_background_task') and self._background_task and not self._background_task.done():
-            self._background_task.cancel()
-
+        """Disconnect the websocket from the kernel client."""
         try:
-            client_manager = self._get_client_manager()
-            # Only remove listener if client exists, don't try to create it
-            if client_manager.has_client(self.kernel_id):
-                client = client_manager.get_client(self.kernel_id)
+            # Get the kernel client from the kernel manager
+            client = self._get_kernel_client()
+            if client:
+                # Remove this websocket's listener from the client
                 client.remove_listener(self.handle_outgoing_message)
         except Exception as e:
-            self.log.debug(f"Failed to disconnect websocket: {e}")
+            self.log.warning(f"Failed to disconnect websocket for kernel {self.kernel_id}: {e}")
 
     def handle_incoming_message(self, incoming_msg):
         """Handle the incoming WS message"""
         channel_name, msg_list = deserialize_msg_from_ws_v1(incoming_msg)
 
-        # Debug: log incoming message type from websocket
         try:
-            if msg_list and len(msg_list) > 0:
-                from jupyter_server.services.kernels.connection.base import BaseKernelWebsocketConnection
-                # msg_list format is [header, parent_header, metadata, content, ...buffers]
-                header = self.websocket_handler.session.unpack(msg_list[0])
-                msg_type = header.get('msg_type', 'unknown')
-                self.log.debug(f"Received {channel_name} message from websocket: {msg_type}")
-        except Exception:
-            pass
-
-        try:
-            client_manager = self._get_client_manager()
-            # Only handle message if client exists, don't try to create it
-            if client_manager.has_client(self.kernel_id):
-                client = client_manager.get_client(self.kernel_id)
+            # Get the kernel client from the kernel manager
+            client = self._get_kernel_client()
+            if client:
                 client.handle_incoming_message(channel_name, msg_list)
-            else:
-                self.log.debug(f"Received message for kernel {self.kernel_id} but client no longer exists")
         except Exception as e:
-            self.log.error(f"Failed to handle incoming message: {e}")
+            self.log.error(f"Failed to handle incoming message for kernel {self.kernel_id}: {e}")
 
     def handle_outgoing_message(self, channel_name, msg):
         """Handle the Kernel Socket message."""
@@ -177,18 +129,7 @@ class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
 
             # Validate message has content before processing
             if not msg or len(msg) == 0:
-                self.log.debug(f"Received empty message on channel {channel_name}")
                 return
-
-            # Debug: log shell channel messages to check if kernel_info_reply is being sent
-            if channel_name == "shell":
-                try:
-                    from jupyter_server.services.kernels.connection.base import deserialize_msg_from_ws_v1
-                    header = self.websocket_handler.session.unpack(msg[0]) if msg else {}
-                    msg_type = header.get('msg_type', 'unknown')
-                    self.log.debug(f"Sending shell message to websocket: {msg_type}")
-                except Exception:
-                    pass
 
             # Serialize to websocket format and send
             bin_msg = serialize_msg_to_ws_v1(msg, channel_name)
@@ -197,5 +138,3 @@ class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
             self.log.warning("A Kernel Socket message arrived on a closed websocket channel.")
         except Exception as err:
             self.log.error(f"Error handling outgoing message on {channel_name}: {err}")
-            import traceback
-            self.log.debug(f"Traceback: {traceback.format_exc()}")

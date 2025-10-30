@@ -438,8 +438,17 @@ class JupyterServerKernelClientMixin(HasTraits):
 
         The status message is manufactured using the session's message format
         and sent through the normal listener routing mechanism.
+
+        Note: Only broadcasts if execution_state is a valid kernel protocol state.
+        Skips broadcasting if state is "unknown" (not part of kernel protocol).
         """
         try:
+            # Don't broadcast "unknown" state - it's not part of the kernel protocol
+            # Valid states are: starting, idle, busy, restarting, dead
+            if self.execution_state == ExecutionStates.UNKNOWN.value:
+                self.log.debug("Skipping broadcast_state - execution state is unknown")
+                return
+
             # Create status message as a dict
             parent_header = self.session.msg_header("status")
             parent_msg_id = parent_header["msg_id"]

@@ -55,7 +55,6 @@ class KernelClientManager(SingletonConfigurable):
             # Reset client state when kernel restarts
             if self.has_client(kernel_id):
                 client = self.get_client(kernel_id)
-                self.log.debug(f"Handling restart for kernel {kernel_id}, cache size: {len(client.message_cache)}")
 
                 # Clear message cache - old message IDs are no longer valid
                 client.message_cache.clear()
@@ -97,14 +96,10 @@ class KernelClientManager(SingletonConfigurable):
             # Check if kernel manager has a pre-created kernel_client property
             if hasattr(kernel_manager, 'kernel_client') and kernel_manager.kernel_client is not None:
                 client = kernel_manager.kernel_client
-                if self.log:
-                    self.log.debug(f"Using pre-created kernel_client from kernel manager for kernel {kernel_id}")
             else:
                 # Fallback: Create client using kernel manager's client factory
                 # This automatically uses the kernel manager's configurable client_class trait
                 client = kernel_manager.client(session=kernel_manager.session)
-                if self.log:
-                    self.log.debug(f"Created new client using kernel manager's client factory for kernel {kernel_id}")
 
             # Register the client
             self.clients[kernel_id] = client
@@ -153,7 +148,7 @@ class KernelClientManager(SingletonConfigurable):
                     return False
             except AttributeError:
                 # Kernel manager might not have lifecycle_state attribute
-                self.log.debug(f"Kernel manager for {kernel_id} does not have lifecycle_state attribute")
+                pass
 
             # Wait for kernel to be in "started" state before connecting channels
             if not await self._wait_for_kernel_started(kernel_manager, kernel_id):
@@ -173,8 +168,6 @@ class KernelClientManager(SingletonConfigurable):
 
         except Exception as e:
             self.log.error(f"Failed to connect client for kernel {kernel_id}: {e}")
-            import traceback
-            self.log.debug(f"Traceback: {traceback.format_exc()}")
             return False
 
     async def _wait_for_kernel_started(self, kernel_manager, kernel_id: str, timeout: float = 30.0) -> bool:
@@ -183,7 +176,6 @@ class KernelClientManager(SingletonConfigurable):
         while (time.time() - start_time) < timeout:
             try:
                 current_state = kernel_manager.lifecycle_state
-                self.log.debug(f"Waiting for kernel {kernel_id} to start, current state: {current_state}")
 
                 # Check if kernel reached started state
                 if current_state == LifecycleStates.STARTED:
@@ -198,7 +190,6 @@ class KernelClientManager(SingletonConfigurable):
                 # Wait before next check
                 await asyncio.sleep(0.5)
             except Exception as e:
-                self.log.debug(f"Error checking kernel {kernel_id} state: {e}")
                 await asyncio.sleep(0.5)
 
         self.log.error(f"Timeout waiting for kernel {kernel_id} to reach started state (last state: {kernel_manager.lifecycle_state if hasattr(kernel_manager, 'lifecycle_state') else 'unknown'})")
