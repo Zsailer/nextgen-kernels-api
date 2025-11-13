@@ -1,14 +1,44 @@
-import asyncio
-from typing import List, Tuple, Optional
 from tornado.websocket import WebSocketClosedError
 from traitlets import List as TraitletsList, Tuple as TraitletsTuple
 from jupyter_server.services.kernels.connection.base import (
     BaseKernelWebsocketConnection,
 )
 from jupyter_server.services.kernels.connection.base import deserialize_msg_from_ws_v1, serialize_msg_to_ws_v1
+from jupyter_client.session import Session
+from ..message_utils import encode_cell_id_in_message, strip_encoding_from_message
 
 
 class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
+    """WebSocket connection that bridges frontend clients to the shared kernel client.
+
+    This class implements the WebSocket side of the shared kernel client architecture.
+    Instead of creating its own ZMQ connections to the kernel, it registers as a listener
+    on the kernel manager's shared kernel client and routes messages bidirectionally.
+
+    Key Responsibilities:
+
+    1. **Listener Registration**:
+       - Registers itself as a message listener on the shared kernel client
+       - Receives all kernel messages through the listener callback
+       - Automatically removed when the WebSocket disconnects
+
+    2. **Cell ID Encoding** (Outgoing to Kernel):
+       - Extracts `cellId` from message metadata
+       - Appends cell ID to message ID: `msg_id#{cell_id}`
+       - Enables routing responses back to the originating cell
+       - Works in conjunction with kernel client's channel encoding
+
+    3. **Message ID Decoding** (Incoming from Kernel):
+       - Strips both channel and cell ID encoding from message IDs
+       - Returns messages to frontend with original msg_ids
+       - Frontend receives messages in the format it expects
+
+    4. **Message Filtering** (Configurable):
+       - Supports filtering messages by type and channel
+       - Can include specific message types (`msg_types` trait)
+       - Can exclude specific message types (`exclude_msg_types` trait)
+       - Reduces bandwidth for specialized clients
+    """
 
     kernel_ws_protocol = "v1.kernel.websocket.jupyter.org"
 
@@ -109,27 +139,52 @@ class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
             self.log.warning(f"Failed to disconnect websocket for kernel {self.kernel_id}: {e}")
 
     def handle_incoming_message(self, incoming_msg):
-        """Handle the incoming WS message"""
+        """Handle incoming messages from WebSocket, encoding cellId into msg_id."""
         channel_name, msg_list = deserialize_msg_from_ws_v1(incoming_msg)
 
         try:
             # Get the kernel client from the kernel manager
             client = self._get_kernel_client()
-            if client:
-                client.handle_incoming_message(channel_name, msg_list)
+            if not client:
+                return
+
+            # Extract cellId from metadata and encode into msg_id
+            try:
+                if len(msg_list) >= 3:  # Need header, parent_header, metadata
+                    session = Session()
+                    metadata = session.unpack(msg_list[2])
+                    cell_id = metadata.get("cellId")
+
+                    if cell_id:
+                        msg_list = encode_cell_id_in_message(msg_list, cell_id)
+            except Exception as e:
+                self.log.debug(f"Error encoding cellId in msg_id: {e}")
+
+            # Send to kernel client (which will prepend channel)
+            client.handle_incoming_message(channel_name, msg_list)
         except Exception as e:
             self.log.error(f"Failed to handle incoming message for kernel {self.kernel_id}: {e}")
 
     def handle_outgoing_message(self, channel_name, msg):
-        """Handle the Kernel Socket message."""
+        """Handle outgoing messages to WebSocket, stripping channel and cellId from msg_id."""
         try:
-            # Note: The message received here should be the 4 core message frames
-            # [header, parent_header, metadata, content, ...buffers]
-            # after identities, delimiter, and signature have been stripped
-
-            # Validate message has content before processing
-            if not msg or len(msg) == 0:
+            # Validate message has minimum required parts
+            if not msg or len(msg) < 4:
+                self.log.warning(f"Message on {channel_name} has insufficient parts: {len(msg) if msg else 0}")
                 return
+
+            # Validate parts are bytes
+            for i, part in enumerate(msg[:4]):
+                if not isinstance(part, bytes):
+                    self.log.error(f"Message part {i} on {channel_name} is not bytes: {type(part)}")
+                    return
+
+            # Strip channel and cellId from msg_ids before sending to frontend
+            try:
+                msg = strip_encoding_from_message(msg)
+            except Exception as e:
+                self.log.debug(f"Error stripping encoding from msg_ids: {e}")
+                # Continue with original message if stripping fails
 
             # Serialize to websocket format and send
             bin_msg = serialize_msg_to_ws_v1(msg, channel_name)
@@ -137,4 +192,4 @@ class KernelClientWebsocketConnection(BaseKernelWebsocketConnection):
         except WebSocketClosedError:
             self.log.warning("A Kernel Socket message arrived on a closed websocket channel.")
         except Exception as err:
-            self.log.error(f"Error handling outgoing message on {channel_name}: {err}")
+            self.log.error(f"Error handling outgoing message on {channel_name}: {err}", exc_info=True)

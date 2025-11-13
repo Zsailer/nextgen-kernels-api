@@ -4,9 +4,8 @@ import asyncio
 from jupyter_server.gateway.managers import GatewayMappingKernelManager
 from jupyter_server.gateway.managers import GatewayKernelManager as _GatewayKernelManager
 from jupyter_server.gateway.managers import GatewayKernelClient as _GatewayKernelClient
-from traitlets import default, Instance
+from traitlets import default, Instance, Type
 
-from ..services.kernels.state_mixin import KernelManagerStateMixin
 from ..services.kernels.client import JupyterServerKernelClientMixin
 
 
@@ -80,10 +79,16 @@ class GatewayKernelClient(JupyterServerKernelClientMixin, _GatewayKernelClient):
 
                     # Serialize message to standard format for listeners
                     # Gateway messages are dicts, convert to list[bytes] format
-                    msg_list = self.session.serialize(message)
-                    # Drop DELIM and signature
-                    msg_list = msg_list[2:]
-                    
+                    # session.serialize() returns: [b'<IDS|MSG>', signature, header, parent_header, metadata, content, buffers...]
+                    serialized = self.session.serialize(message)
+
+                    # Skip delimiter (index 0) and signature (index 1) to get [header, parent_header, metadata, content, ...]
+                    if serialized and len(serialized) >= 6:  # Need delimiter + signature + 4 message parts
+                        msg_list = serialized[2:]
+                    else:
+                        self.log.warning(f"Gateway message too short: {len(serialized) if serialized else 0} parts")
+                        continue
+
                     # Route to listeners
                     await self._route_to_listeners(channel_name, msg_list)
 
@@ -102,18 +107,17 @@ class GatewayKernelClient(JupyterServerKernelClientMixin, _GatewayKernelClient):
             self.log.error(f"Gateway channel monitoring failed for {channel_name}: {e}")
 
 
-class GatewayKernelManager(KernelManagerStateMixin, _GatewayKernelManager):
+class GatewayKernelManager(_GatewayKernelManager):
     """
-    Gateway kernel manager that uses our enhanced gateway kernel client with state tracking.
+    Gateway kernel manager that uses our enhanced gateway kernel client.
 
     This manager inherits from jupyter_server's GatewayKernelManager and configures it
     to use our GatewayKernelClient, which provides:
 
     - Gateway communication capabilities for remote kernels
     - Kernel monitoring integration (heartbeat, execution state tracking)
-    - Message caching and state management
+    - Message ID encoding with channel and src_id using simple string operations
     - Full compatibility with our kernel monitor extension
-    - Automatic lifecycle state tracking via KernelManagerStateMixin
     - Pre-created kernel client instance stored as a property
     - Automatic client connection/disconnection on kernel start/shutdown
 
@@ -133,6 +137,7 @@ class GatewayKernelManager(KernelManagerStateMixin, _GatewayKernelManager):
     def __init__(self, **kwargs):
         """Initialize the kernel manager and create a kernel client instance."""
         super().__init__(**kwargs)
+
         # Create a kernel client instance immediately
         self.kernel_client = self.client(session=self.session)
 
@@ -180,7 +185,6 @@ class GatewayKernelManager(KernelManagerStateMixin, _GatewayKernelManager):
                 # On restart, clear client state but keep connection
                 # The connection will be refreshed in post_start_kernel after restart
                 self.log.debug(f"Clearing kernel client state for restart of kernel {self.kernel_id}")
-                self.kernel_client.message_cache.clear()
                 self.kernel_client.last_shell_status_time = None
                 self.kernel_client.last_control_status_time = None
                 # Disconnect before restart - will reconnect after

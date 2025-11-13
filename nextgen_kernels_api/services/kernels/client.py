@@ -3,59 +3,64 @@ import time
 import typing as t
 from datetime import datetime, timezone
 
-from traitlets import HasTraits
+from traitlets import HasTraits, Type
 from jupyter_client.asynchronous.client import AsyncKernelClient
+from jupyter_client.channels import AsyncZMQSocketChannel
 from jupyter_client.channelsabc import ChannelABC
 from .states import ExecutionStates
-from .cache import KernelMessageCache
+from .message_utils import parse_msg_id, encode_channel_in_message_dict
+
+class NamedAsyncZMQSocketChannel(AsyncZMQSocketChannel):
+    """Prepends the channel name to all message IDs to this socket."""
+    channel_name = "unknown"
+    
+    def send(self, msg):
+        """Send a message with automatic channel encoding."""
+        msg = encode_channel_in_message_dict(msg, self.channel_name)
+        return super().send(msg)    
+    
+class ShellChannel(NamedAsyncZMQSocketChannel):
+    """Shell channel that automatically encodes 'shell' in outgoing msg_ids."""
+    channel_name = "shell"
 
 
-def _extract_message_id_and_cache(client, result, method_name, kwargs):
-    """Helper function to extract message ID and cache the message."""
-    # Extract message ID from the result
-    msg_id = None
-    msg_type = None
+class ControlChannel(AsyncZMQSocketChannel):
+    """Control channel that automatically encodes 'control' in outgoing msg_ids."""
+    channel_name = "control"
 
-    if hasattr(result, 'header') and hasattr(result.header, 'get'):
-        msg_id = result.header.get('msg_id')
-        msg_type = result.header.get('msg_type')
-    elif hasattr(result, 'header') and 'msg_id' in result.header:
-        msg_id = result.header['msg_id']
-        msg_type = result.header.get('msg_type')
-    elif isinstance(result, dict) and 'header' in result:
-        header = result['header']
-        msg_id = header.get('msg_id')
-        msg_type = header.get('msg_type')
-    elif hasattr(result, 'msg_id'):
-        msg_id = result.msg_id
-        msg_type = getattr(result, 'msg_type', None)
-    elif isinstance(result, str):
-        # Some methods return just the message ID string
-        msg_id = result
-        msg_type = method_name + '_request'
 
-    # Cache the outgoing message if we found an ID
-    if msg_id and hasattr(client, 'message_cache'):
-        # Determine channel based on method name
-        channel = client._get_channel_for_method(method_name)
-
-        # Extract cell_id from kwargs if available (common in execute requests)
-        cell_id = None
-        if 'metadata' in kwargs and isinstance(kwargs['metadata'], dict):
-            cell_id = kwargs['metadata'].get('cellId')
-
-        client.message_cache.add({
-            "msg_id": msg_id,
-            "channel": channel,
-            "cell_id": cell_id,
-            "msg_type": msg_type,
-            "method": method_name,
-            "outgoing": True  # Mark as outgoing message
-        })
+class StdinChannel(AsyncZMQSocketChannel):
+    """Stdin channel that automatically encodes 'stdin' in outgoing msg_ids."""
+    channel_name = "stdin"
 
 
 class JupyterServerKernelClientMixin(HasTraits):
-    """Simple mixin that adds listener functionality to AsyncKernelClient."""
+    """Mixin that enhances AsyncKernelClient with listener API, message queuing, and channel encoding.
+
+    Key Features:
+
+    1. **Listener API**: Register multiple listeners to receive kernel messages without blocking.
+       - `add_listener()`: Add a callback function to receive messages from the kernel
+       - `remove_listener()`: Remove a registered listener
+       - Supports message filtering by type and channel
+       - Multiple listeners can be registered (e.g., multiple WebSocket connections)
+
+    2. **Message Queuing**: Queue messages that arrive before the kernel client is ready.
+       - Messages from WebSockets are queued during kernel startup
+       - Queued messages are processed once the kernel connection is established
+       - Prevents message loss during the connection handshake
+       - Configurable queue size to prevent memory issues
+
+    3. **Channel Encoding**: Automatically encode channel names in all outgoing message IDs.
+       - All messages sent through shell, control, or stdin channels get the channel name prepended
+       - Format: `{channel}:{base_msg_id}` (e.g., "shell:abc123_456_0")
+       - Makes it easy to identify which channel status messages came from
+       - Enables proper execution state tracking (shell vs control channel responses)
+       - Uses custom channel classes (ShellChannel, ControlChannel, StdinChannel)
+
+    This mixin is designed to work with Jupyter Server's multi-websocket architecture where
+    a single kernel client is shared across multiple WebSocket connections.
+    """
 
     # Track kernel execution state (simplified - just a string)
     execution_state: str = ExecutionStates.UNKNOWN.value
@@ -69,8 +74,13 @@ class JupyterServerKernelClientMixin(HasTraits):
 
     # Connection test configuration
     connection_test_timeout: float = 120.0  # Total timeout for connection test in seconds
-    connection_test_check_interval: float = 1.0  # How often to check for messages in seconds
+    connection_test_check_interval: float = 0.1  # How often to check for messages in seconds
     connection_test_retry_interval: float = 10.0  # How often to retry kernel_info requests in seconds
+
+    # Override channel classes to use our custom ones with automatic encoding
+    shell_channel_class = Type(ShellChannel)
+    control_channel_class = Type(ControlChannel)
+    stdin_channel_class = Type(StdinChannel)
 
     # Set of listener functions - don't use Traitlets Set, just plain Python set
     def __init__(self, *args, **kwargs):
@@ -87,14 +97,8 @@ class JupyterServerKernelClientMixin(HasTraits):
         self._queued_messages = []
         self._max_queue_size = 1000  # Prevent memory issues
 
-        # Message cache for tracking outgoing messages
-        self.message_cache = KernelMessageCache(parent=self)
-
-        # Flag to track if methods are wrapped
-        self._methods_wrapped = False
-
-        # Ensure upstream methods are wrapped to track outgoing messages
-        self._ensure_methods_wrapped()
+        # Note: The session is already EncodedMsgIdSession, created by the KernelManager
+        # No need to replace it here
 
     def add_listener(
         self,
@@ -129,73 +133,6 @@ class JupyterServerKernelClientMixin(HasTraits):
     def remove_listener(self, callback: t.Callable[[str, list[bytes]], None]):
         """Remove a listener."""
         self._listeners.pop(callback, None)
-
-    def _get_channel_for_method(self, method_name: str) -> str:
-        """Determine which channel a kernel client method uses."""
-        # Most kernel methods use the shell channel
-        shell_methods = {
-            'execute', 'execute_interactive', 'complete', 'inspect',
-            'history', 'is_complete', 'comm_info', 'kernel_info'
-        }
-
-        # Control channel methods (typically for shutdown/restart)
-        control_methods = {'shutdown', 'restart'}
-
-        # Input methods use stdin channel
-        stdin_methods = {'input'}
-
-        if method_name in control_methods:
-            return 'control'
-        elif method_name in stdin_methods:
-            return 'stdin'
-        else:
-            # Default to shell channel for most methods
-            return 'shell'
-
-    def _wrap_upstream_methods(self):
-        """Wrap upstream kernel client methods to track outgoing messages."""
-        # Methods to wrap for message tracking
-        methods_to_wrap = {
-            'execute', 'execute_interactive', 'complete', 'inspect',
-            'history', 'is_complete', 'comm_info', 'kernel_info',
-            'shutdown', 'restart'
-        }
-
-        for method_name in methods_to_wrap:
-            if hasattr(self, method_name):
-                original_method = getattr(self, method_name)
-
-                # Create a wrapper that uses the same logic as the decorators
-                if asyncio.iscoroutinefunction(original_method):
-                    def create_async_wrapper(client, orig_method, name):
-                        async def async_wrapper(*args, **kwargs):
-                            result = await orig_method(*args, **kwargs)
-                            _extract_message_id_and_cache(client, result, name, kwargs)
-                            return result
-                        return async_wrapper
-                    wrapped_method = create_async_wrapper(self, original_method, method_name)
-                else:
-                    def create_sync_wrapper(client, orig_method, name):
-                        def sync_wrapper(*args, **kwargs):
-                            result = orig_method(*args, **kwargs)
-                            _extract_message_id_and_cache(client, result, name, kwargs)
-                            return result
-                        return sync_wrapper
-                    wrapped_method = create_sync_wrapper(self, original_method, method_name)
-
-                # Preserve the original method attributes
-                wrapped_method.__name__ = method_name
-                wrapped_method.__qualname__ = f"{self.__class__.__name__}.{method_name}"
-                wrapped_method.__doc__ = getattr(original_method, '__doc__', None)
-
-                # Replace the method with our wrapped version
-                setattr(self, method_name, wrapped_method)
-
-    def _ensure_methods_wrapped(self):
-        """Ensure upstream methods are wrapped - call this after initialization."""
-        if not self._methods_wrapped:
-            self._wrap_upstream_methods()
-            self._methods_wrapped = True
 
     def mark_connection_ready(self):
         """Mark the connection as ready and process queued messages."""
@@ -253,10 +190,10 @@ class JupyterServerKernelClientMixin(HasTraits):
             self.log.warn("Error handling incoming message.")
 
     def handle_incoming_message(self, channel_name: str, msg: list[bytes]):
-        """Handle incoming kernel messages and cache them for response mapping.
+        """Handle incoming kernel messages and encode channel in msg_id.
 
-        This method processes incoming kernel messages and caches them so that
-        response messages can be mapped back to the source channel.
+        This method processes incoming kernel messages from WebSocket clients.
+        It prepends the channel name to the msg_id for internal routing.
 
         Args:
             channel_name: The channel the message came from ('shell', 'iopub', etc.)
@@ -266,24 +203,19 @@ class JupyterServerKernelClientMixin(HasTraits):
         if not msg or len(msg) == 0:
             return
 
-        # Cache the message ID and its channel so that any response message
-        # can be mapped back to the source channel
+        # Prepend channel to msg_id for internal routing
         try:
             header = self.session.unpack(msg[0])
             msg_id = header["msg_id"]
-            msg_type = header.get("msg_type")
-            metadata = self.session.unpack(msg[2])
-            cell_id = metadata.get("cellId")
 
-            self.message_cache.add({
-                "msg_id": msg_id,
-                "channel": channel_name,
-                "cell_id": cell_id,
-                "msg_type": msg_type,
-                "outgoing": False  # Mark as incoming message
-            })
+            # Check if msg_id already has channel encoded
+            if not msg_id.startswith(f"{channel_name}:"):
+                # Prepend channel
+                header["msg_id"] = f"{channel_name}:{msg_id}"
+                msg[0] = self.session.pack(header)
+
         except Exception as e:
-            self.log.debug(f"Error caching incoming message: {e}")
+            self.log.debug(f"Error encoding channel in incoming message ID: {e}")
 
         # If connection is not ready, queue the message
         if self._queue_message_if_not_ready(channel_name, msg):
@@ -310,12 +242,16 @@ class JupyterServerKernelClientMixin(HasTraits):
         if not self._listeners:
             return
 
+        # Validate message format before routing
+        if not msg or len(msg) < 4:
+            self.log.warning(f"Cannot route malformed message on {channel_name}: {len(msg) if msg else 0} parts (expected at least 4)")
+            return
+
         # Extract message type for filtering
         msg_type = None
         try:
             header = self.session.unpack(msg[0]) if msg and len(msg) > 0 else {}
             msg_type = header.get('msg_type', 'unknown')
-            self.log.debug(f"Routing {channel_name} message ({msg_type}) to {len(self._listeners)} listeners")
         except Exception as e:
             self.log.debug(f"Error extracting message type: {e}")
             msg_type = 'unknown'
@@ -392,10 +328,13 @@ class JupyterServerKernelClientMixin(HasTraits):
                     parent_header = self.session.unpack(parent_header)
                 parent_msg_id = parent_header.get("msg_id")
 
-            # Check if parent message came from shell or control channel using message cache
-            if parent_msg_id and parent_msg_id in self.message_cache:
-                cached_msg = self.message_cache[parent_msg_id]
-                parent_channel = cached_msg.get("channel")
+            # Parse parent_msg_id to extract channel
+            if parent_msg_id:
+                try:
+                    parent_channel, _, _ = parse_msg_id(parent_msg_id)
+                except Exception as e:
+                    self.log.debug(f"Error parsing parent msg_id '{parent_msg_id}': {e}")
+                    parent_channel = None
 
                 # Track last status message time for both shell and control channels
                 current_time = datetime.now(timezone.utc)
@@ -418,14 +357,14 @@ class JupyterServerKernelClientMixin(HasTraits):
                         old_state = self.execution_state
                         self.execution_state = execution_state
                         self.log.debug(f"Execution state: {old_state} -> {execution_state}")
-            else:
-                # Extract execution_state to log what we're ignoring
-                if execution_state is None:
-                    content = msg_dict.get("content", {})
-                    if isinstance(content, bytes):
-                        content = self.session.unpack(content)
-                    execution_state = content.get("execution_state")
-                self.log.debug(f"Ignoring status message - parent not in cache (state would be: {execution_state})")
+                elif parent_channel is None:
+                    # Log when we can't determine parent channel
+                    if execution_state is None:
+                        content = msg_dict.get("content", {})
+                        if isinstance(content, bytes):
+                            content = self.session.unpack(content)
+                        execution_state = content.get("execution_state")
+                    self.log.debug(f"Ignoring status message - cannot parse parent channel (state would be: {execution_state})")
         except Exception as e:
             self.log.debug(f"Error updating execution state from status message: {e}")
 
@@ -449,22 +388,26 @@ class JupyterServerKernelClientMixin(HasTraits):
                 self.log.debug("Skipping broadcast_state - execution state is unknown")
                 return
 
-            # Create status message as a dict
-            parent_header = self.session.msg_header("status")
-            parent_msg_id = parent_header["msg_id"]
-            msg_dict = self.session.msg("status", content={"execution_state": self.execution_state}, parent=parent_header)
+            # Create status message
+            msg_dict = self.session.msg(
+                "status",
+                content={"execution_state": self.execution_state}
+            )
 
-            self.message_cache.add({
-                "msg_id": parent_msg_id,
-                "channel": "shell",
-                "cell_id": None
-            })
-            # Serialize using session.serialize to create a proper ZMQ message format
-            # This returns the full message including signature, just like recv_multipart() would
-            # We need to drop the signature and identities (first 2 elements)
-            msg_parts = self.session.serialize(msg_dict)[2:]
+            # Serialize the message
+            # session.serialize() returns:
+            # [b'<IDS|MSG>', signature, header, parent_header, metadata, content, buffers...]
+            serialized = self.session.serialize(msg_dict)
 
-            # Send to listeners - same format as messages from the kernel
+            # Skip delimiter (index 0) and signature (index 1) to get message parts
+            # Result: [header, parent_header, metadata, content, buffers...]
+            if len(serialized) < 6:  # Need delimiter + signature + 4 message parts minimum
+                self.log.warning(f"broadcast_state: serialized message too short: {len(serialized)} parts")
+                return
+
+            msg_parts = serialized[2:]  # Skip delimiter and signature
+
+            # Send to listeners
             self.handle_outgoing_message("iopub", msg_parts)
 
         except Exception as e:
@@ -514,15 +457,14 @@ class JupyterServerKernelClientMixin(HasTraits):
                         # Update execution state from status messages
                         self._update_execution_state_from_status(channel_name, msg_dict)
 
-                        # Route to listeners with msg_list (after feed_identities removes identity frames and delimiter)
-                        # msg_list should have format: [signature, header, parent_header, metadata, content, ...buffers]
-                        # But for v1 websocket protocol, we don't want the signature - skip it
-                        if msg_list and len(msg_list) > 4:
-                            # Has signature as first element - skip it
+                        # Route to listeners with msg_list
+                        # After feed_identities, msg_list has format (delimiter already removed):
+                        # [signature, header, parent_header, metadata, content, ...buffers]
+                        # Skip signature (index 0) to get: [header, parent_header, metadata, content, ...buffers]
+                        if msg_list and len(msg_list) >= 5:
                             await self._route_to_listeners(channel_name, msg_list[1:])
                         else:
-                            # Already just the 4 message parts
-                            await self._route_to_listeners(channel_name, msg_list)
+                            self.log.warning(f"Received malformed message on {channel_name}: {len(msg_list) if msg_list else 0} parts")
 
                 except Exception as e:
                     # Log the error instead of silently ignoring it
@@ -622,30 +564,16 @@ class JupyterServerKernelClientMixin(HasTraits):
         try:
             if hasattr(self, 'kernel_info'):
                 # Send without waiting for reply
-                self.kernel_info(reply=False)
+                self.kernel_info()
         except Exception as e:
             self.log.debug(f"Error sending kernel_info on shell channel: {e}")
 
     async def _send_kernel_info_control(self):
         """Send kernel_info request on control channel (no reply expected)."""
         try:
-            # Control channel kernel_info - we just want to trigger a status message
             if hasattr(self.control_channel, 'send'):
                 msg = self.session.msg('kernel_info_request')
-                msg_id = msg['header']['msg_id']
-
-                # Manually cache this message with control channel
-                # We can't use _extract_message_id_and_cache because it determines channel
-                # based on method name, and kernel_info defaults to shell channel
-                self.message_cache.add({
-                    "msg_id": msg_id,
-                    "channel": "control",
-                    "cell_id": None,
-                    "msg_type": "kernel_info_request",
-                    "method": "kernel_info",
-                    "outgoing": True
-                })
-
+                # Channel wrapper will automatically encode channel in msg_id
                 self.control_channel.send(msg)
         except Exception as e:
             self.log.debug(f"Error sending kernel_info on control channel: {e}")
@@ -713,37 +641,13 @@ class JupyterServerKernelClientMixin(HasTraits):
                 self.execution_state = ExecutionStates.IDLE.value
                 self.last_activity = datetime.now(timezone.utc)
 
-            self.log.info(f"Successfully connected to kernel")
+            self.log.info("Successfully connected to kernel")
             return True
 
         except Exception as e:
             self.log.error(f"Failed to connect to kernel: {e}")
             self._connecting = False
             return False
-
-    def is_connecting(self) -> bool:
-        """Check if the kernel is currently attempting to connect.
-
-        Returns:
-            bool: True if connection is in progress, False otherwise
-        """
-        return self._connecting
-
-    def is_connected(self) -> bool:
-        """Check if the kernel is connected and communicating.
-
-        A kernel is considered connected if:
-        1. Connection is marked as ready
-        2. Heartbeat is active (if available)
-
-        Returns:
-            bool: True if connected and communicating, False otherwise
-        """
-        if not self._connection_ready:
-            return False
-
-        # Check heartbeat if available
-        return self.hb_channel.is_beating()
 
     async def disconnect(self):
         """Disconnect from the kernel and reset connection state.
@@ -792,5 +696,5 @@ class JupyterServerKernelClientMixin(HasTraits):
 
 class JupyterServerKernelClient(JupyterServerKernelClientMixin, AsyncKernelClient):
     """
-    A simplified kernel client with listener functionality and message queuing.
+    A kernel client with listener functionality and message queuing.
     """

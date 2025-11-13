@@ -6,17 +6,17 @@ from jupyter_server.services.kernels.kernelmanager import (
 )
 from traitlets import Type, observe, Instance
 from .client import JupyterServerKernelClient
-from .state_mixin import KernelManagerStateMixin
 
 
-class KernelManager(KernelManagerStateMixin, ServerKernelManager):
-    """Kernel manager with state tracking and enhanced client.
+class KernelManager(ServerKernelManager):
+    """Kernel manager with enhanced client.
 
     This kernel manager inherits from ServerKernelManager and adds:
-    - Automatic lifecycle state tracking via KernelManagerStateMixin
-    - Enhanced kernel client (JupyterServerKernelClient)
+    - Enhanced kernel client (JupyterServerKernelClient) with message ID encoding
     - Pre-created kernel client instance stored as a property
     - Automatic client connection/disconnection on kernel start/shutdown
+
+    The client encodes channel information in message IDs using simple string operations.
     """
 
     client_class = Type(
@@ -42,6 +42,7 @@ class KernelManager(KernelManagerStateMixin, ServerKernelManager):
     def __init__(self, **kwargs):
         """Initialize the kernel manager and create a kernel client instance."""
         super().__init__(**kwargs)
+
         # Create a kernel client instance immediately
         self.kernel_client = self.client(session=self.session)
 
@@ -94,7 +95,6 @@ class KernelManager(KernelManagerStateMixin, ServerKernelManager):
                 # On restart, clear client state but keep connection
                 # The connection will be refreshed in post_start_kernel after restart
                 self.log.debug(f"Clearing kernel client state for restart of kernel {self.kernel_id}")
-                self.kernel_client.message_cache.clear()
                 self.kernel_client.last_shell_status_time = None
                 self.kernel_client.last_control_status_time = None
                 # Disconnect before restart - will reconnect after
