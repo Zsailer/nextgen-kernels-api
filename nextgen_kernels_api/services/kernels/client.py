@@ -24,12 +24,12 @@ class ShellChannel(NamedAsyncZMQSocketChannel):
     channel_name = "shell"
 
 
-class ControlChannel(AsyncZMQSocketChannel):
+class ControlChannel(NamedAsyncZMQSocketChannel):
     """Control channel that automatically encodes 'control' in outgoing msg_ids."""
     channel_name = "control"
 
 
-class StdinChannel(AsyncZMQSocketChannel):
+class StdinChannel(NamedAsyncZMQSocketChannel):
     """Stdin channel that automatically encodes 'stdin' in outgoing msg_ids."""
     channel_name = "stdin"
 
