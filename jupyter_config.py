@@ -21,7 +21,24 @@ c.KernelManager.client_class = "nextgen_kernels_api.services.kernels.client.Jupy
 # Configure the WebSocket connection class
 c.ServerApp.kernel_websocket_connection_class = "nextgen_kernels_api.services.kernels.connection.kernel_client_connection.KernelClientWebsocketConnection"
 
-# Optional: Enable debug logging to see message routing
+# ============================================================================
+# Kernel Client Registry Configuration
+# ============================================================================
+# The KernelClientRegistry automatically discovers provisioner-to-client mappings
+# from entry points in the 'jupyter_kernel_client_registry' group.
+#
+# Entry points should be defined in external packages like:
+#
+# In pyproject.toml:
+# [project.entry-points.jupyter_kernel_client_registry]
+# "jupyter_server.saturn.provisioners.spark_provisioner:SparkProvisioner" =
+#     "jupyter_server_documents.kernel_client:DocumentAwareSparkProvisionerAwareKernelClient"
+
+# Configure the fallback kernel client (used when no provisioner-specific mapping exists)
+# Defaults to jupyter_client.client.KernelClient if not set
+# c.KernelClientRegistry.fallback_client_class = "nextgen_kernels_api.services.kernels.client.JupyterServerKernelClient"
+
+# Optional: Enable debug logging to see message routing and entry point discovery
 # c.Application.log_level = "DEBUG"
 
 # Optional: Disable token for local development (NOT for production\!)

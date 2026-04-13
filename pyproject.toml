@@ -58,3 +58,6 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 timeout = 30
 timeout_method = "thread"
+
+[project.entry-points."jupyter_kernel_client_registry"]
+"kernel_manager.provisioners.spark_provisioner:SparkProvisioner" = "jupyter_server_documents.kernel_client:DocumentAwareSparkProvisionerAwareKernelClient"

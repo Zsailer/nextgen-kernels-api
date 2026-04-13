@@ -1,9 +1,14 @@
 """Gateway kernel manager that integrates with our kernel monitoring system."""
 
 import asyncio
+
+from jupyter_client import KernelConnectionInfo
+from jupyter_server.gateway.gateway_client import GatewayClient
 from jupyter_server.gateway.managers import GatewayMappingKernelManager
 from jupyter_server.gateway.managers import GatewayKernelManager as _GatewayKernelManager
 from jupyter_server.gateway.managers import GatewayKernelClient as _GatewayKernelClient
+from jupyter_server.utils import url_path_join
+from tornado.escape import url_escape
 from traitlets import default, Instance, Type
 
 from ..services.kernels.client import JupyterServerKernelClientMixin
@@ -63,6 +68,7 @@ class GatewayKernelClient(JupyterServerKernelClientMixin, _GatewayKernelClient):
     async def _monitor_channel_messages(self, channel_name: str, channel):
         """Monitor a gateway channel for incoming messages."""
         try:
+            error_count = 0
             while channel.is_alive():
                 try:
                     # Get message from gateway channel queue
@@ -91,20 +97,51 @@ class GatewayKernelClient(JupyterServerKernelClientMixin, _GatewayKernelClient):
 
                     # Route to listeners
                     await self._route_to_listeners(channel_name, msg_list)
-
+                    error_count = 0
                 except asyncio.TimeoutError:
                     # No message available, continue loop
+                    await asyncio.sleep(0.01)
                     continue
                 except Exception as e:
-                    self.log.debug(f"Error processing gateway message in {channel_name}: {e}")
+                    #TODO How to signal the kernel manager to restart the kernel, or notify the user the kernel is died
+                    if error_count < 10:
+                        self.log.debug(f"Error processing gateway message in {channel_name}: {e}")
+                        error_count=+1
+                    await asyncio.sleep(10)
                     continue
 
-                await asyncio.sleep(0.01)
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
             self.log.error(f"Gateway channel monitoring failed for {channel_name}: {e}")
+
+    def load_connection_info(self, info: KernelConnectionInfo) -> None:
+        """Load WebSocket connection info from provisioner.
+        
+        GatewayKernelClient expects connection_info to contain:
+        - ws_url: WebSocket URL to the gateway (required)
+        - key: Session key for message signing (optional)
+        
+        The ws_url is provided by SparkProvisioner in its connection_info.
+        """
+        if "ws_url" not in info:
+            raise ValueError(
+                "GatewayKernelClient requires 'ws_url' in connection_info. "
+                "This should be provided by the provisioner (e.g., SparkProvisioner)."
+            )
+        
+        self.ws_url = info["ws_url"]
+        self.log.debug(f"Loaded WebSocket URL from connection_info: {self.ws_url}")
+        
+        # Load session key if provided
+        if "key" in info:
+            key = info["key"]
+            if isinstance(key, str):
+                key = key.encode()
+            if isinstance(key, bytes):
+                self.session.key = key
+                self.log.debug("Loaded session key from connection_info")
 
 
 class GatewayKernelManager(_GatewayKernelManager):
@@ -138,9 +175,6 @@ class GatewayKernelManager(_GatewayKernelManager):
         """Initialize the kernel manager and create a kernel client instance."""
         super().__init__(**kwargs)
 
-        # Create a kernel client instance immediately
-        self.kernel_client = self.client(session=self.session)
-
     async def post_start_kernel(self, **kwargs):
         """After kernel starts, connect the kernel client.
 
@@ -152,6 +186,8 @@ class GatewayKernelManager(_GatewayKernelManager):
         to ensure the kernel client connects properly.
         """
         await super().post_start_kernel(**kwargs)
+
+        self.kernel_client = self.client(session=self.session)
 
         try:
             # Load latest connection info from kernel manager
